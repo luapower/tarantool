@@ -2,8 +2,6 @@
 --Tarantool client for LuaJIT.
 --Written by Cosmin Apreutesei. Public Domain.
 
-if not ... then require'test'; return end
-
 local ffi     = require'ffi'
 local bit     = require'bit'
 local mp      = require'messagepack'
@@ -33,7 +31,6 @@ local AUTH       = 7
 local EVAL       = 8
 local UPSERT     = 9
 local PING       = 64
-local ERROR_TYPE = 65536
 
 -- packet keys
 local TYPE          = 0x00
@@ -92,7 +89,9 @@ end
 
 local request, select --fw. decl.
 
-c.connect = protect(function(c)
+c.connect = protect(function(opt)
+	local c = setmetatable(opt or {}, {__index = c})
+	c:clear_metadata_cache()
 	if not c.tcp then
 		local sock = require'sock'
 		c.tcp = sock.tcp
@@ -105,28 +104,28 @@ c.connect = protect(function(c)
 	local b = c._b(64)
 	local greeting = line(check_io(c, c.tcp:recvn(b, 64, expires)))
 	local salt     = line(check_io(c, c.tcp:recvn(b, 64, expires)))
-	if not c.user then
-		return true
+	if c.user then
+		local rbody = {[USER_NAME] = c.user, [TUPLE] = {}}
+		local password = c.password or ''
+		if password ~= '' then
+			local s1 = sha1(password)
+			local s2 = sha1(s1)
+			local s3 = sha1(salt .. s2)
+			local scramble = xor_strings(s1, s3)
+			rbody[TUPLE] = {'chap-sha1', scramble}
+		end
+		request(c, AUTH, rbody, expires)
 	end
-	local rbody = {[USER_NAME] = c.user, [TUPLE] = {}}
-	local password = c.password or ''
-	if password ~= '' then
-		local s1 = sha1(password)
-		local s2 = sha1(s1)
-		local s3 = sha1(salt .. s2)
-		local scramble = xor_strings(s1, s3)
-		rbody[TUPLE] = {'chap-sha1', scramble}
-	end
-	return request(c, {[TYPE] = AUTH}, rbody, expires)
+	return c
 end)
 
 c.close = function(c)
 	return c.tcp:close()
 end
 
---[[local]] function request(c, header, body, expires)
+--[[local]] function request(c, req_type, body, expires)
 	c.sync_num = ((c.sync_num or 0) + 1) % 100000
-	header[SYNC] = c.sync_num
+	local header = {[SYNC] = c.sync_num, [TYPE] = req_type}
 	local header = mp.pack(header)
 	local body = mp.pack(body)
 	local len = mp.pack(#header + #body)
@@ -141,11 +140,11 @@ end
 	check(c, res_header[SYNC] == c.sync_num)
 	local _, res_body = check(c, unpack_next())
 	check(c, type(res_body) == 'table')
-	return {
-		code  = res_header[TYPE],
-		data  = res_body[DATA],
-		error = res_body[ERROR],
-	}
+	local code  = res_header[TYPE]
+	local data  = res_body[DATA]
+	local error = res_body[ERROR]
+	check(c, code == OK, error)
+	return data
 end
 
 local function resolve_space(c, space)
@@ -153,52 +152,93 @@ local function resolve_space(c, space)
 end
 
 local function resolve_index(c, space, index)
-	local spaceno = check(c, resolve_space(c, space), 'no space %s', space)
-	return type(index) == 'number' and index or c._lookup_index(spaceno, index)
+	return type(index) == 'number' and index
+		or c._lookup_index(resolve_space(c, space), index)
 end
 
-c.enable_lookups = function(c)
+c.clear_metadata_cache = function(c)
 	c._lookup_space = memoize(function(space)
 		local t = select(c, VIEW_SPACE, INDEX_SPACE_NAME, space)
 		check(c, type(t) == 'table')
-		return t[1] and t[1][1]
+		return check(c, t[1] and t[1][1], "no space '%s'", space)
 	end)
 	c._lookup_index = memoize(function(spaceno, index)
 		if not spaceno then return end
 		local t = select(c, VIEW_INDEX, INDEX_INDEX_NAME, {spaceno, index})
 		check(c, type(t) == 'table')
-		return t[1] and t[1][2]
+		return check(c, t[1] and t[1][2], "no index '%s'", index)
 	end)
 end
 
-c.disable_lookups = function(c)
-	c._lookup_space = nil
-	c._lookup_index = nil
+local function key_arg(key)
+	return type(key) == 'table' and key or key == nil and {} or {key}
 end
 
 --[[local]] function select(c, space, index, key, opt)
 	opt = opt or empty
-	local spaceno = check(c, resolve_space(c, space), 'no space %s', space)
-	local indexno = check(c, resolve_index(c, spaceno, index or 'primary'), 'no index %s', index)
+	local spaceno = resolve_space(c, space)
+	local indexno = resolve_index(c, spaceno, index or 'primary')
 	local body = {
 		[SPACE_ID] = spaceno,
 		[INDEX_ID] = indexno,
-		[KEY] = type(key) == 'table' and key or key == nil and {} or {key},
+		[KEY] = key_arg(key),
 	}
 	body[LIMIT] = opt.limit or 0xFFFFFFFF
 	body[OFFSET] = opt.offset or 0
 	body[ITERATOR] = opt.iterator
-	local res = request(c, {[TYPE] = SELECT}, body)
-	check(c, res.code == OK, res.error)
-	return res.data
+	return request(c, SELECT, body)
 end
-
 c.select = protect(select)
 
-function c.new(c1)
-	setmetatable(c1, c1).__index = c
-	c1:enable_lookups()
-	return c1
+c.insert = protect(function(c, space, tuple)
+	return request(c, INSERT, {[SPACE_ID] = resolve_space(c, space), [TUPLE] = tuple})
+end)
+
+c.replace = protect(function(c, space, tuple)
+	return request(c, REPLACE, {[SPACE_ID] = resolve_space(c, space), [TUPLE] = tuple})
+end)
+
+c.update = protect(function(c, space, index, key, oplist)
+	return request(c, UPDATE, {
+		[SPACE_ID] = resolve_space(c, space),
+		[INDEX_ID] = resolve_index(c, index),
+		[KEY] = key_arg(key),
+		[TUPLE] = oplist,
+	})
+end)
+
+c.delete = protect(function(c, space, key)
+	return request(c, DELETE, {[SPACE_ID] = resolve_space(c, space), [KEY] = key_arg(key)})
+end)
+
+c.upsert = protect(function(c, space, tuple, oplist)
+	return request(c, UPSERT, {
+		[SPACE_ID] = resolve_space(c, space),
+		[TUPLE] = tuple,
+		[OPS] = oplist,
+	})
+end)
+
+c.ping = protect(function(c)
+	return request(c, PING, {})
+end)
+
+c.call = protect(function(self, proc, args)
+	return unpack(request(c, CALL, {[FUNCTION_NAME] = proc, [TUPLE] = args}))
+end)
+
+if not ... then
+	local tarantool = c
+	local sock = require'sock'
+	sock.run(function()
+		local c = tarantool.connect{
+			--user     = 'root',
+			--password = 'pass',
+		}
+		pp(c:select('_vspace'))
+		--pp(c:call(
+		pp('close', c:close())
+	end)
 end
 
 return c
