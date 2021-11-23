@@ -2,6 +2,7 @@
 ## `local tarantool = require'tarantool'`
 
 Tarantool client for LuaJIT.
+Uses [sock] by default but you can bring your own.
 
 ## API
 
