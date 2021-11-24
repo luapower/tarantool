@@ -5,6 +5,7 @@
 local ffi     = require'ffi'
 local bit     = require'bit'
 local mp      = require'messagepack'
+local b64     = require'base64'
 local sha1    = require'sha1'.sha1
 local errors  = require'errors'
 local glue    = require'glue'
@@ -17,20 +18,23 @@ local memoize = glue.memoize
 
 local check_io, check, protect = errors.tcp_protocol_errors'tarantool'
 
-local c = {host = '127.0.0.1', port = 3301, timeout = 2}
+local c = {host = '127.0.0.1', port = 3301, timeout = 2, tracebacks = false}
 
--- packet codes
+--IPROTO_*
 local OK         = 0
 local SELECT     = 1
 local INSERT     = 2
 local REPLACE    = 3
 local UPDATE     = 4
 local DELETE     = 5
-local CALL       = 6
 local AUTH       = 7
 local EVAL       = 8
 local UPSERT     = 9
-local PING       = 64
+local CALL       = 10
+local EXECUTE    = 11
+local NOP        = 12
+local PREPARE    = 13
+local PING       = 0x40
 
 -- packet keys
 local TYPE          = 0x00
@@ -44,9 +48,23 @@ local KEY           = 0x20
 local TUPLE         = 0x21
 local FUNCTION_NAME = 0x22
 local USER_NAME     = 0x23
+local EXPR          = 0x27
 local OPS           = 0x28
+local OPTIONS       = 0x2b
 local DATA          = 0x30
 local ERROR         = 0x31
+local METADATA      = 0x32
+local BIND_METADATA = 0x33
+local BIND_COUNT    = 0x34
+local SQL_TEXT      = 0x40
+local SQL_BIND      = 0x41
+local STMT_ID       = 0x43
+local FIELD_NAME    = 0x00
+local FIELD_TYPE    = 0x01
+local FIELD_COLL    = 0x02
+local FIELD_IS_NULLABLE = 0x03
+local FIELD_IS_AUTOINCREMENT = 0x04
+local FIELD_SPAN = 0x05
 
 -- default spaces
 local SPACE_SCHEMA  = 272
@@ -58,22 +76,12 @@ local SPACE_PRIV    = 312
 local SPACE_CLUSTER = 320
 
 -- default views
-local VIEW_SPACE    = 281
-local VIEW_INDEX    = 289
+local VIEW_SPACE = 281
+local VIEW_INDEX = 289
 
 -- index info
-local INDEX_SPACE_PRIMARY = 0
-local INDEX_SPACE_NAME    = 2
-local INDEX_INDEX_PRIMARY = 0
-local INDEX_INDEX_NAME    = 2
-
-local function line(b, n)
-	local j
-	for i = 0, n-1 do
-		if b[i] == 10 then j = i; break end
-	end
-	return j and ffi.string(b, j)
-end
+local INDEX_SPACE_NAME = 2
+local INDEX_INDEX_NAME = 2
 
 local function xor_strings(s1, s2)
 	assert(#s1 == #s2)
@@ -87,7 +95,7 @@ local function xor_strings(s1, s2)
 	return ffi.string(b, n)
 end
 
-local request, select --fw. decl.
+local request, tselect --fw. decl.
 
 c.connect = protect(function(opt)
 	local c = setmetatable(opt or {}, {__index = c})
@@ -102,19 +110,19 @@ c.connect = protect(function(opt)
 	check_io(c, c.tcp:connect(c.host, c.port, expires))
 	c._b = buffer()
 	local b = c._b(64)
-	local greeting = line(check_io(c, c.tcp:recvn(b, 64, expires)))
-	local salt     = line(check_io(c, c.tcp:recvn(b, 64, expires)))
+	check_io(c, c.tcp:recvn(b, 64, expires)) --greeting
+	local salt = ffi.string(check_io(c, c.tcp:recvn(b, 64, expires)), 44)
 	if c.user then
-		local rbody = {[USER_NAME] = c.user, [TUPLE] = {}}
-		local password = c.password or ''
-		if password ~= '' then
-			local s1 = sha1(password)
+		local body = {[USER_NAME] = c.user, [TUPLE] = empty}
+		if c.password and c.password ~= '' then
+			local salt = b64.decode(salt):sub(1, 20)
+			local s1 = sha1(c.password)
 			local s2 = sha1(s1)
 			local s3 = sha1(salt .. s2)
 			local scramble = xor_strings(s1, s3)
-			rbody[TUPLE] = {'chap-sha1', scramble}
+			body[TUPLE] = {'chap-sha1', scramble}
 		end
-		request(c, AUTH, rbody, expires)
+		request(c, AUTH, body, expires)
 	end
 	return c
 end)
@@ -152,35 +160,35 @@ local function resolve_space(c, space)
 end
 
 local function resolve_index(c, space, index)
-	return type(index) == 'number' and index
-		or c._lookup_index(resolve_space(c, space), index)
+	index = index or 0
+	local space = resolve_space(c, space)
+	return space, type(index) == 'number' and index or c._lookup_index(space, index)
 end
 
 c.clear_metadata_cache = function(c)
 	c._lookup_space = memoize(function(space)
-		local t = select(c, VIEW_SPACE, INDEX_SPACE_NAME, space)
+		local t = tselect(c, VIEW_SPACE, INDEX_SPACE_NAME, space)
 		check(c, type(t) == 'table')
 		return check(c, t[1] and t[1][1], "no space '%s'", space)
 	end)
 	c._lookup_index = memoize(function(spaceno, index)
 		if not spaceno then return end
-		local t = select(c, VIEW_INDEX, INDEX_INDEX_NAME, {spaceno, index})
+		local t = tselect(c, VIEW_INDEX, INDEX_INDEX_NAME, {spaceno, index})
 		check(c, type(t) == 'table')
 		return check(c, t[1] and t[1][2], "no index '%s'", index)
 	end)
 end
 
 local function key_arg(key)
-	return type(key) == 'table' and key or key == nil and {} or {key}
+	return type(key) == 'table' and key or key == nil and empty or {key}
 end
 
---[[local]] function select(c, space, index, key, opt)
+--[[local]] function tselect(c, space, index, key, opt)
 	opt = opt or empty
-	local spaceno = resolve_space(c, space)
-	local indexno = resolve_index(c, spaceno, index or 'primary')
+	local space, index = resolve_index(c, space, index)
 	local body = {
-		[SPACE_ID] = spaceno,
-		[INDEX_ID] = indexno,
+		[SPACE_ID] = space,
+		[INDEX_ID] = index,
 		[KEY] = key_arg(key),
 	}
 	body[LIMIT] = opt.limit or 0xFFFFFFFF
@@ -188,7 +196,7 @@ end
 	body[ITERATOR] = opt.iterator
 	return request(c, SELECT, body)
 end
-c.select = protect(select)
+c.select = protect(tselect)
 
 c.insert = protect(function(c, space, tuple)
 	return request(c, INSERT, {[SPACE_ID] = resolve_space(c, space), [TUPLE] = tuple})
@@ -199,44 +207,95 @@ c.replace = protect(function(c, space, tuple)
 end)
 
 c.update = protect(function(c, space, index, key, oplist)
+	local space, index = resolve_index(c, space, index)
 	return request(c, UPDATE, {
-		[SPACE_ID] = resolve_space(c, space),
-		[INDEX_ID] = resolve_index(c, index),
+		[SPACE_ID] = space,
+		[INDEX_ID] = index,
 		[KEY] = key_arg(key),
 		[TUPLE] = oplist,
 	})
 end)
 
 c.delete = protect(function(c, space, key)
-	return request(c, DELETE, {[SPACE_ID] = resolve_space(c, space), [KEY] = key_arg(key)})
-end)
-
-c.upsert = protect(function(c, space, tuple, oplist)
-	return request(c, UPSERT, {
-		[SPACE_ID] = resolve_space(c, space),
-		[TUPLE] = tuple,
-		[OPS] = oplist,
+	local space, index = resolve_index(c, space, index)
+	return request(c, DELETE, {
+		[SPACE_ID] = space,
+		[INDEX_ID] = index,
+		[KEY] = key_arg(key),
 	})
 end)
 
-c.ping = protect(function(c)
-	return request(c, PING, {})
+c.upsert = protect(function(c, space, index, key, oplist)
+	return request(c, UPSERT, {
+		[SPACE_ID] = resolve_space(c, space),
+		[INDEX_ID] = index,
+		[OPS] = oplist,
+		[TUPLE] = key_arg(key),
+	})
 end)
 
-c.call = protect(function(self, proc, args)
-	return unpack(request(c, CALL, {[FUNCTION_NAME] = proc, [TUPLE] = args}))
+c.eval = protect(function(c, expr, ...)
+	return unpack(request(c, EVAL, {[EXPR] = expr, [TUPLE] = {...}}))
+end)
+
+c.call = protect(function(c, fn, ...)
+	return unpack(request(c, CALL, {[FUNCTION_NAME] = fn, [TUPLE] = {...}}))
+end)
+
+c.query = protect(function(c, sql, ...)
+	local i, opt = 1
+	if type(sql) == 'table' then --opt, sql, ...
+		i, opt, sql = 2, sql, ...
+	end
+	return request(c, EXECUTE, {
+		[STMT_ID] = type(sql) == 'number' and sql or nil,
+		[SQL_TEXT] = type(sql) == 'string' and sql or nil,
+		[SQL_BIND] = {select(i, ...)},
+		[OPTIONS] = opt or empty,
+	})
+end)
+
+local function fields_metadata(c, t, n)
+	check(c, #t == n)
+	local dt = {}
+	for i, t in ipairs(t) do
+		local t = t[METADATA]
+		dt[i] = {
+			name = t[FIELD_NAME],
+			type = t[FIELD_TYPE],
+			collation = t[FIELD_COLL],
+			not_null = not t[FIELD_IS_NULLABLE],
+			autoinc = t[FIELD_IS_AUTOINCREMENT],
+			span = t[FIELD_SPAN],
+		}
+	end
+	return dt
+end
+
+c.prepare = protect(function(c, sql)
+	local ret = request(c, PREPARE, {
+		[SQL_TEXT] = type(sql) == 'string' and sql or nil,
+	})
+	return fields_metadata(c, ret[BIND_METADATA], ret[BIND_COUNT])
+end)
+
+c.ping = protect(function(c)
+	return request(c, PING, empty)
 end)
 
 if not ... then
 	local tarantool = c
 	local sock = require'sock'
 	sock.run(function()
-		local c = tarantool.connect{
-			--user     = 'root',
-			--password = 'pass',
-		}
-		pp(c:select('_vspace'))
-		--pp(c:call(
+		local c = assert(tarantool.connect{
+			user     = 'admin',
+			password = 'admin',
+		})
+		--pp(c:eval"box.schema.space.create('test')")
+		--pp(c:eval"box.space.test:create_index('primary', {parts = {1}})")
+		--pp(c:eval"box.space.test:insert{'c', 4, 7}")
+		pp(c:select('test'))
+		pp(c:prepare('select * from test'))
 		pp('close', c:close())
 	end)
 end
