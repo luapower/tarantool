@@ -255,12 +255,16 @@ c.upsert = protect(function(c, space, index, key, oplist)
 	})[DATA]
 end)
 
+local function args(...)
+	return {[mp.N] = select('#', ...), ...}
+end
+
 c.eval = protect(function(c, expr, ...)
-	return unpack(request(c, EVAL, {[EXPR] = expr, [TUPLE] = mp.pack_args(...)})[DATA])
+	return unpack(request(c, EVAL, {[EXPR] = expr, [TUPLE] = args(...)})[DATA])
 end)
 
 c.call = protect(function(c, fn, ...)
-	return unpack(request(c, CALL, {[FUNCTION_NAME] = fn, [TUPLE] = mp.pack_args(...)})[DATA])
+	return unpack(request(c, CALL, {[FUNCTION_NAME] = fn, [TUPLE] = args(...)})[DATA])
 end)
 
 c.exec = protect(function(c, sql, params, opt, param_meta)
