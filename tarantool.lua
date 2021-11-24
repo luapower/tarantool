@@ -70,15 +70,6 @@ local FIELD_IS_AUTOINCREMENT = 0x04
 local FIELD_SPAN    = 0x05
 local STREAM_ID     = 0x0a
 
--- default spaces
-local SPACE_SCHEMA  = 272
-local SPACE_SPACE   = 280
-local SPACE_INDEX   = 288
-local SPACE_FUNC    = 296
-local SPACE_USER    = 304
-local SPACE_PRIV    = 312
-local SPACE_CLUSTER = 320
-
 -- default views
 local VIEW_SPACE = 281
 local VIEW_INDEX = 289
