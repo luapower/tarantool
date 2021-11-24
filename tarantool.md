@@ -8,7 +8,7 @@ Uses [sock] by default but you can bring your own.
 
 ------------------------------------------------- ----------------------------
 `tarantool.connect(opt) -> tt`                    connect to server
-&nbsp;`opt.host`                                        host (`'127.0.0.1'`)
+	`opt.host`                                        host (`'127.0.0.1'`)
 `opt.port`                                        port (`3301`)
 `opt.user`                                        user (optional)
 `opt.password`                                    password (optional)
