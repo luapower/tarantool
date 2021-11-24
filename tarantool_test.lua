@@ -10,7 +10,7 @@ sock.run(function()
 	})
 	c = c:stream()
 	assert(c:ping())
-	local pass = 9
+	local pass = 4
 	if pass == 1 then
 		pp(c:eval[[
 			box.schema.space.create('test')

@@ -21,7 +21,7 @@ local object  = glue.object
 
 local check_io, checkp, check, protect = errors.tcp_protocol_errors'tarantool'
 
-local c = {host = '127.0.0.1', port = 3301, timeout = 2, tracebacks = false}
+local c = {host = '127.0.0.1', port = 3301, timeout = 5, tracebacks = false}
 
 --IPROTO_*
 local OK         = 0
@@ -110,7 +110,7 @@ c.connect = protect(function(opt)
 		c.clock = sock.clock
 	end
 	c.tcp = check_io(q, c.tcp()) --pin it so that it's closed automatically on error.
-	local expires = c.clock() + c.timeout
+	local expires = opt.expires or c.clock() + (opt.timeout or c.timeout)
 	check_io(c, c.tcp:connect(c.host, c.port, expires))
 	c._b = buffer()
 	local b = c._b(64)
@@ -141,6 +141,7 @@ c.close = function(c)
 end
 
 --[[local]] function request(c, req_type, body, expires)
+	local expires = expires or c.clock() + c.timeout
 	c.sync_num = (c.sync_num or 0) + 1
 	local header = {[SYNC] = c.sync_num, [TYPE] = req_type, [STREAM_ID] = c.stream_id}
 	local header = mp.pack(header)
