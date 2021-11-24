@@ -33,9 +33,9 @@ you need to use the environment's built-in async socket API.
 `tt:upsert(space, index, key, oplist)`            [insert or update tuples in bulk](https://www.tarantool.io/en/doc/latest/reference/reference_lua/box_space/upsert/)
 `tt:eval(expr, ...) -> ...`                       eval Lua expression on the server
 `tt:call(fn, ...) -> ...`                         call Lua function on the server
-`tt:exec([opt,]sql, params) -> rows`              execute SQL statement
+`tt:exec(sql, params, [xopt]) -> rows`            execute SQL statement
 `tt:prepare(sql) -> st`                           prepare SQL statement
-`st:exec(params) -> rows`                         exec prepared statement
+`st:exec(params, [xopt]) -> rows`                 exec prepared statement
 `st.fields`                                       field list with field info
 `st.params`                                       param list with param info
 `tt:ping()`                                       ping
@@ -54,3 +54,4 @@ a space or index got renamed or removed (but not when new ones are created).
 named params in the query. `st:exec()` doesn't have that limitation and
 requires you to put `'?'` params in the array part and the named params in
 the hash part of the params table.
+* there's no valid `xopt` options yet.

@@ -149,17 +149,16 @@ end
 	local request = len .. header .. body
 	check_io(c, c.tcp:send(request))
 	local size = ffi.string(check_io(c, c.tcp:recvn(c._b(5), 5, expires)), 5)
-	local size = checkp(c, mp.unpack(size))
+	local size = mp.unpack(size)
 	local s = ffi.string(check_io(c, c.tcp:recvn(c._b(size), size, expires)), size)
 	local unpack_next = mp.unpacker(s)
-	local _, res_header = checkp(c, unpack_next())
-	checkp(c, type(res_header) == 'table')
+	local _, res_header = unpack_next()
 	checkp(c, res_header[SYNC] == c.sync_num)
-	local _, res_body = checkp(c, unpack_next())
-	checkp(c, type(res_body) == 'table')
-	local code  = res_header[TYPE]
-	local err   = res_body[ERROR]
-	check(c, code == OK, '%s', err)
+	local _, res_body = unpack_next()
+	local code = res_header[TYPE]
+	if code ~= OK then
+		check(c, false, res_body[ERROR])
+	end
 	return res_body
 end
 
@@ -176,13 +175,11 @@ end
 c.clear_metadata_cache = function(c)
 	c._lookup_space = memoize(function(space)
 		local t = tselect(c, VIEW_SPACE, INDEX_SPACE_NAME, space)
-		checkp(c, type(t) == 'table')
 		return check(c, t[1] and t[1][1], "no space '%s'", space)
 	end)
 	c._lookup_index = memoize(function(spaceno, index)
 		if not spaceno then return end
 		local t = tselect(c, VIEW_INDEX, INDEX_INDEX_NAME, {spaceno, index})
-		checkp(c, type(t) == 'table')
 		return check(c, t[1] and t[1][2], "no index '%s'", index)
 	end)
 end
@@ -218,18 +215,16 @@ end
 	body[OFFSET] = opt.offset or 0
 	body[ITERATOR] = opt.iterator
 	local expires = opt.expires or c.clock() + (opt.timeout or c.timeout)
-	local res = request(c, SELECT, body, expires)
-	checkp(c, type(res[DATA]) == 'table')
-	return res[DATA]
+	return request(c, SELECT, body, expires)[DATA]
 end
 c.select = protect(tselect)
 
-c.insert = protect(function(c, space, tuple, opt)
-	return request(c, INSERT, {[SPACE_ID] = resolve_space(c, space), [TUPLE] = tuple})
+c.insert = protect(function(c, space, tuple)
+	return request(c, INSERT, {[SPACE_ID] = resolve_space(c, space), [TUPLE] = tuple})[DATA]
 end)
 
 c.replace = protect(function(c, space, tuple)
-	return request(c, REPLACE, {[SPACE_ID] = resolve_space(c, space), [TUPLE] = tuple})
+	return request(c, REPLACE, {[SPACE_ID] = resolve_space(c, space), [TUPLE] = tuple})[DATA]
 end)
 
 c.update = protect(function(c, space, index, key, oplist)
@@ -239,7 +234,7 @@ c.update = protect(function(c, space, index, key, oplist)
 		[INDEX_ID] = index,
 		[KEY] = key_arg(key),
 		[TUPLE] = oplist,
-	})
+	})[DATA]
 end)
 
 c.delete = protect(function(c, space, key)
@@ -248,7 +243,7 @@ c.delete = protect(function(c, space, key)
 		[SPACE_ID] = space,
 		[INDEX_ID] = index,
 		[KEY] = key_arg(key),
-	})
+	})[DATA]
 end)
 
 c.upsert = protect(function(c, space, index, key, oplist)
@@ -257,21 +252,18 @@ c.upsert = protect(function(c, space, index, key, oplist)
 		[INDEX_ID] = index,
 		[OPS] = oplist,
 		[TUPLE] = key_arg(key),
-	})
+	})[DATA]
 end)
 
 c.eval = protect(function(c, expr, ...)
-	return unpack(request(c, EVAL, {[EXPR] = expr, [TUPLE] = {...}}))
+	return unpack(request(c, EVAL, {[EXPR] = expr, [TUPLE] = mp.pack_args(...)})[DATA])
 end)
 
 c.call = protect(function(c, fn, ...)
-	return unpack(request(c, CALL, {[FUNCTION_NAME] = fn, [TUPLE] = {...}}))
+	return unpack(request(c, CALL, {[FUNCTION_NAME] = fn, [TUPLE] = mp.pack_args(...)})[DATA])
 end)
 
-c.exec = protect(function(c, opt, sql, params, param_meta)
-	if type(opt) ~= 'table' then --sql|stmt_id, params
-		opt, sql, params, param_meta = empty, opt, sql, params
-	end
+c.exec = protect(function(c, sql, params, opt, param_meta)
 	if param_meta and param_meta.has_named_params then --pick params from named keys
 		local t = params
 		params = {}
@@ -287,7 +279,7 @@ c.exec = protect(function(c, opt, sql, params, param_meta)
 		[STMT_ID] = type(sql) == 'number' and sql or nil,
 		[SQL_TEXT] = type(sql) == 'string' and sql or nil,
 		[SQL_BIND] = params,
-		[OPTIONS] = opt,
+		[OPTIONS] = opt or empty,
 	})
 	return res[DATA], fields(res[METADATA])
 end)
@@ -321,8 +313,8 @@ c.prepare = protect(function(c, sql)
 	})
 end)
 
-function st:exec(params)
-	return self.conn:exec(self.id, params, self.params)
+function st:exec(params, opt)
+	return self.conn:exec(self.id, params, opt, self.params)
 end
 
 c.ping = protect(function(c)
