@@ -8,13 +8,13 @@ Uses [sock] by default but you can bring your own.
 
 ------------------------------------------------- ----------------------------
 `tarantool.connect(opt) -> tt`                    connect to server
-	`opt.host`                                        host (`'127.0.0.1'`)
-`opt.port`                                        port (`3301`)
-`opt.user`                                        user (optional)
-`opt.password`                                    password (optional)
-`opt.timeout`                                     timeout (`2`)
-`opt.tcp`                                         tcp object (`sock.tcp()`)
-`opt.clock`                                       clock function (`sock.clock`)
+`  opt.host`                                      host (`'127.0.0.1'`)
+`  opt.port`                                      port (`3301`)
+`  opt.user`                                      user (optional)
+`  opt.password`                                  password (optional)
+`  opt.timeout`                                   timeout (`2`)
+`  opt.tcp`                                       tcp object (`sock.tcp()`)
+`  opt.clock`                                     clock function (`sock.clock`)
 `tt:select(space,[index],[key],[sopt]) -> tuples` select tuples from a space
 `sopt.limit`                                      limit (`4GB-1`)
 `sopt.offset`                                     offset (`0`)
