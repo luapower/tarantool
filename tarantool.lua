@@ -2,6 +2,8 @@
 --Tarantool client for LuaJIT.
 --Written by Cosmin Apreutesei. Public Domain.
 
+if not ... then require'tarantool_test'; return end
+
 local ffi     = require'ffi'
 local bit     = require'bit'
 local mp      = require'messagepack'
@@ -15,8 +17,9 @@ local u8p     = glue.u8p
 local buffer  = glue.buffer
 local empty   = glue.empty
 local memoize = glue.memoize
+local object  = glue.object
 
-local check_io, check, protect = errors.tcp_protocol_errors'tarantool'
+local check_io, checkp, check, protect = errors.tcp_protocol_errors'tarantool'
 
 local c = {host = '127.0.0.1', port = 3301, timeout = 2, tracebacks = false}
 
@@ -64,7 +67,8 @@ local FIELD_TYPE    = 0x01
 local FIELD_COLL    = 0x02
 local FIELD_IS_NULLABLE = 0x03
 local FIELD_IS_AUTOINCREMENT = 0x04
-local FIELD_SPAN = 0x05
+local FIELD_SPAN    = 0x05
+local STREAM_ID     = 0x0a
 
 -- default spaces
 local SPACE_SCHEMA  = 272
@@ -98,7 +102,7 @@ end
 local request, tselect --fw. decl.
 
 c.connect = protect(function(opt)
-	local c = setmetatable(opt or {}, {__index = c})
+	local c = object(c, opt)
 	c:clear_metadata_cache()
 	if not c.tcp then
 		local sock = require'sock'
@@ -127,32 +131,36 @@ c.connect = protect(function(opt)
 	return c
 end)
 
+c.stream = function(c)
+	c.last_stream_id = (c.last_stream_id or 0) + 1
+	return object(c, {stream_id = c.last_stream_id})
+end
+
 c.close = function(c)
 	return c.tcp:close()
 end
 
 --[[local]] function request(c, req_type, body, expires)
-	c.sync_num = ((c.sync_num or 0) + 1) % 100000
-	local header = {[SYNC] = c.sync_num, [TYPE] = req_type}
+	c.sync_num = (c.sync_num or 0) + 1
+	local header = {[SYNC] = c.sync_num, [TYPE] = req_type, [STREAM_ID] = c.stream_id}
 	local header = mp.pack(header)
 	local body = mp.pack(body)
 	local len = mp.pack(#header + #body)
 	local request = len .. header .. body
 	check_io(c, c.tcp:send(request))
 	local size = ffi.string(check_io(c, c.tcp:recvn(c._b(5), 5, expires)), 5)
-	local size = check(c, mp.unpack(size))
+	local size = checkp(c, mp.unpack(size))
 	local s = ffi.string(check_io(c, c.tcp:recvn(c._b(size), size, expires)), size)
 	local unpack_next = mp.unpacker(s)
-	local _, res_header = check(c, unpack_next())
-	check(c, type(res_header) == 'table')
-	check(c, res_header[SYNC] == c.sync_num)
-	local _, res_body = check(c, unpack_next())
-	check(c, type(res_body) == 'table')
+	local _, res_header = checkp(c, unpack_next())
+	checkp(c, type(res_header) == 'table')
+	checkp(c, res_header[SYNC] == c.sync_num)
+	local _, res_body = checkp(c, unpack_next())
+	checkp(c, type(res_body) == 'table')
 	local code  = res_header[TYPE]
-	local data  = res_body[DATA]
-	local error = res_body[ERROR]
-	check(c, code == OK, error)
-	return data
+	local err   = res_body[ERROR]
+	check(c, code == OK, '%s', err)
+	return res_body
 end
 
 local function resolve_space(c, space)
@@ -168,19 +176,34 @@ end
 c.clear_metadata_cache = function(c)
 	c._lookup_space = memoize(function(space)
 		local t = tselect(c, VIEW_SPACE, INDEX_SPACE_NAME, space)
-		check(c, type(t) == 'table')
+		checkp(c, type(t) == 'table')
 		return check(c, t[1] and t[1][1], "no space '%s'", space)
 	end)
 	c._lookup_index = memoize(function(spaceno, index)
 		if not spaceno then return end
 		local t = tselect(c, VIEW_INDEX, INDEX_INDEX_NAME, {spaceno, index})
-		check(c, type(t) == 'table')
+		checkp(c, type(t) == 'table')
 		return check(c, t[1] and t[1][2], "no index '%s'", index)
 	end)
 end
 
 local function key_arg(key)
 	return type(key) == 'table' and key or key == nil and empty or {key}
+end
+
+local function fields(t)
+	local dt = {}
+	for i, t in ipairs(t) do
+		dt[i] = {
+			name = t[FIELD_NAME],
+			type = t[FIELD_TYPE],
+			collation = t[FIELD_COLL],
+			not_null = not t[FIELD_IS_NULLABLE],
+			autoinc = t[FIELD_IS_AUTOINCREMENT],
+			span = t[FIELD_SPAN],
+		}
+	end
+	return dt
 end
 
 --[[local]] function tselect(c, space, index, key, opt)
@@ -194,11 +217,14 @@ end
 	body[LIMIT] = opt.limit or 0xFFFFFFFF
 	body[OFFSET] = opt.offset or 0
 	body[ITERATOR] = opt.iterator
-	return request(c, SELECT, body)
+	local expires = opt.expires or c.clock() + (opt.timeout or c.timeout)
+	local res = request(c, SELECT, body, expires)
+	checkp(c, type(res[DATA]) == 'table')
+	return res[DATA]
 end
 c.select = protect(tselect)
 
-c.insert = protect(function(c, space, tuple)
+c.insert = protect(function(c, space, tuple, opt)
 	return request(c, INSERT, {[SPACE_ID] = resolve_space(c, space), [TUPLE] = tuple})
 end)
 
@@ -242,62 +268,66 @@ c.call = protect(function(c, fn, ...)
 	return unpack(request(c, CALL, {[FUNCTION_NAME] = fn, [TUPLE] = {...}}))
 end)
 
-c.query = protect(function(c, sql, ...)
-	local i, opt = 1
-	if type(sql) == 'table' then --opt, sql, ...
-		i, opt, sql = 2, sql, ...
+c.exec = protect(function(c, opt, sql, params, param_meta)
+	if type(opt) ~= 'table' then --sql|stmt_id, params
+		opt, sql, params, param_meta = empty, opt, sql, params
 	end
-	return request(c, EXECUTE, {
+	if param_meta and param_meta.has_named_params then --pick params from named keys
+		local t = params
+		params = {}
+		for i,f in ipairs(param_meta) do
+			if f.index then
+				params[i] = t[f.index]
+			else
+				params[i] = t[f.name]
+			end
+		end
+	end
+	local res = request(c, EXECUTE, {
 		[STMT_ID] = type(sql) == 'number' and sql or nil,
 		[SQL_TEXT] = type(sql) == 'string' and sql or nil,
-		[SQL_BIND] = {select(i, ...)},
-		[OPTIONS] = opt or empty,
+		[SQL_BIND] = params,
+		[OPTIONS] = opt,
 	})
+	return res[DATA], fields(res[METADATA])
 end)
 
-local function fields_metadata(c, t, n)
-	check(c, #t == n)
-	local dt = {}
-	for i, t in ipairs(t) do
-		local t = t[METADATA]
-		dt[i] = {
-			name = t[FIELD_NAME],
-			type = t[FIELD_TYPE],
-			collation = t[FIELD_COLL],
-			not_null = not t[FIELD_IS_NULLABLE],
-			autoinc = t[FIELD_IS_AUTOINCREMENT],
-			span = t[FIELD_SPAN],
-		}
+local st = {}
+
+local function params(t)
+	t = fields(t)
+	local j = 0
+	for i,f in ipairs(t) do
+		if f.name:sub(1, 1) == ':' then
+			f.name = f.name:sub(2)
+			t.has_named_params = true
+		else
+			j = j + 1
+			f.index = j
+		end
 	end
-	return dt
+	return t
 end
 
 c.prepare = protect(function(c, sql)
-	local ret = request(c, PREPARE, {
+	local res = request(c, PREPARE, {
 		[SQL_TEXT] = type(sql) == 'string' and sql or nil,
 	})
-	return fields_metadata(c, ret[BIND_METADATA], ret[BIND_COUNT])
+	return object(st, {
+		id = res[STMT_ID],
+		conn = c,
+		fields = fields(res[METADATA]),
+		params = params(res[BIND_METADATA]),
+	})
 end)
+
+function st:exec(params)
+	return self.conn:exec(self.id, params, self.params)
+end
 
 c.ping = protect(function(c)
 	return request(c, PING, empty)
 end)
 
-if not ... then
-	local tarantool = c
-	local sock = require'sock'
-	sock.run(function()
-		local c = assert(tarantool.connect{
-			user     = 'admin',
-			password = 'admin',
-		})
-		--pp(c:eval"box.schema.space.create('test')")
-		--pp(c:eval"box.space.test:create_index('primary', {parts = {1}})")
-		--pp(c:eval"box.space.test:insert{'c', 4, 7}")
-		pp(c:select('test'))
-		pp(c:prepare('select * from test'))
-		pp('close', c:close())
-	end)
-end
 
 return c

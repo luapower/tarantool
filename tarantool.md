@@ -2,7 +2,13 @@
 ## `local tarantool = require'tarantool'`
 
 Tarantool client for LuaJIT.
-Uses [sock] by default but you can bring your own.
+Uses [sock] for I/O but you can bring your own.
+
+Compared to other implementations I've seen, this one has more consistent
+error handling (from using [errors].tcp_protocol_errors), better handling
+of timeouts (due to [sock]'s `expires` parameter), it's half the code size,
+it's based on Tarantool 2.8, and you can use it in environments where
+you need to use the environment's built-in async socket API.
 
 ## API
 
@@ -15,10 +21,11 @@ Uses [sock] by default but you can bring your own.
 `  opt.timeout`                                   timeout (`2`)
 `  opt.tcp`                                       tcp object (`sock.tcp()`)
 `  opt.clock`                                     clock function (`sock.clock`)
+`tt:stream() -> tt`                               create a stream
 `tt:select(space,[index],[key],[sopt]) -> tuples` select tuples from a space
-`sopt.limit`                                      limit (`4GB-1`)
-`sopt.offset`                                     offset (`0`)
-`sopt.iterator`                                   iterator
+`  sopt.limit`                                    limit (`4GB-1`)
+`  sopt.offset`                                   offset (`0`)
+`  sopt.iterator`                                 iterator
 `tt:insert(space, tuple)`                         insert a tuple in a space
 `tt:replace(space, tuple)`                        insert or update a tuple in a space
 `tt:delete(space, key)`                           delete tuples from a space
@@ -26,8 +33,11 @@ Uses [sock] by default but you can bring your own.
 `tt:upsert(space, index, key, oplist)`            [insert or update tuples in bulk](https://www.tarantool.io/en/doc/latest/reference/reference_lua/box_space/upsert/)
 `tt:eval(expr, ...) -> ...`                       eval Lua expression on the server
 `tt:call(fn, ...) -> ...`                         call Lua function on the server
-`tt:query([opt,]sql|stmt_id, ...) -> ...`         execute SQL query
-`tt:prepare(sql) -> stmt_id, params`              prepare SQL query
+`tt:exec([opt,]sql, params) -> rows`              execute SQL statement
+`tt:prepare(sql) -> st`                           prepare SQL statement
+`st:exec(params) -> rows`                         exec prepared statement
+`st.fields`                                       field list with field info
+`st.params`                                       param list with param info
 `tt:ping()`                                       ping
 `tt:clear_metadata_cache()`                       clear `space` and `index` names
 ------------------------------------------------- ----------------------------
@@ -40,3 +50,7 @@ a space or index got renamed or removed (but not when new ones are created).
 * `tuple` is an array of values.
 * `key` can be a string or an array of values.
 * `oplist` is an array of update operations of form `{op, field, value}`.
+* `params` in `tt:exec()` must always be an array, even when you're using
+named params in the query. `st:exec()` doesn't have that limitation and
+requires you to put `'?'` params in the array part and the named params in
+the hash part of the params table.
