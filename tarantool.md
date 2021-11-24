@@ -37,6 +37,7 @@ async socket API.
 `tt:exec(sql, params, [xopt]) -> rows`            execute SQL statement
 `tt:prepare(sql) -> st`                           prepare SQL statement
 `st:exec(params, [xopt]) -> rows`                 exec prepared statement
+`st:free()`                                       unprepare statement
 `st.fields`                                       field list with field info
 `st.params`                                       param list with param info
 `tt:ping()`                                       ping

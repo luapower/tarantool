@@ -322,6 +322,13 @@ function st:exec(params, opt)
 	return self.conn:exec(self.id, params, opt, self.params)
 end
 
+local unprepare = protect(function(c, stmt_id)
+	return request(c, PREPARE, {[STMT_ID] = stmt_id})[STMT_ID]
+end)
+function st:free()
+	return unprepare(self.conn, self.id)
+end
+
 c.ping = protect(function(c)
 	return request(c, PING, empty)
 end)

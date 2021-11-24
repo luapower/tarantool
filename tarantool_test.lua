@@ -38,6 +38,8 @@ sock.run(function()
 	elseif pass == 4 then
 		local st = c:prepare('select * from table2 where column1 = ? and column2 = :c2')
 		pp(st:exec{1, c2 = 'b'})
+		pp(st:free())
+		--pp(st:exec{1, c2 = 'b'})
 	elseif pass == 5 then
 		pp(c:insert('test', {'h', 2}))
 	elseif pass == 6 then
