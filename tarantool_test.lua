@@ -55,20 +55,23 @@ sock.run(function()
 			return 'hello', ...
 		]], 5, nil, 7))
 	elseif pass == 10 then
+		--NOTE: this currently doesn't work if your LuaJIT is using GC64 mode.
+		local strip = true
 		pp(c:eval([[
+			local strip = true
 			local f = function(...)
 				return 'hello', ...
 			end
-			local s = string.dump(f, true)
+			local s = string.dump(f, strip)
 			return 'tt lua', s:gsub('.', function(c) return tostring(string.byte(c))..' ' end)
 			--return loadstring(s)(1, 6)
 			--return 'tt lua', string.dump(function(...)
 			--	return 'hello', ...
-			--end, true)
+			--end, strip)
 		]]))
 		pp('my lua', string.dump(function(...)
 			return 'hello', ...
-		end, true):gsub('.', function(c) return tostring(string.byte(c))..' ' end))
+		end, strio):gsub('.', function(c) return tostring(string.byte(c))..' ' end))
 		pp(c:eval(function(...)
 			return 'hello', ...
 		end, 5, nil, 7))
