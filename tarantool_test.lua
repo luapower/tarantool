@@ -56,13 +56,19 @@ sock.run(function()
 		]], 5, nil, 7))
 	elseif pass == 10 then
 		pp(c:eval([[
-			return 'tt lua', string.dump(function(...)
+			local f = function(...)
 				return 'hello', ...
-			end):gsub('.', function(c) return tostring(string.byte(c))..' ' end)
+			end
+			local s = string.dump(f, true)
+			return 'tt lua', s:gsub('.', function(c) return tostring(string.byte(c))..' ' end)
+			--return loadstring(s)(1, 6)
+			--return 'tt lua', string.dump(function(...)
+			--	return 'hello', ...
+			--end, true)
 		]]))
 		pp('my lua', string.dump(function(...)
 			return 'hello', ...
-		end):gsub('.', function(c) return tostring(string.byte(c))..' ' end))
+		end, true):gsub('.', function(c) return tostring(string.byte(c))..' ' end))
 		pp(c:eval(function(...)
 			return 'hello', ...
 		end, 5, nil, 7))
