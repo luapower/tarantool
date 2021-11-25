@@ -1,6 +1,7 @@
 
 local tarantool = require'tarantool'
 local sock = require'sock'
+local pp = require'pp'
 
 sock.run(function()
 	local c = assert(tarantool.connect{
@@ -10,7 +11,7 @@ sock.run(function()
 	})
 	c = c:stream()
 	assert(c:ping())
-	local pass = 4
+	local pass = 10
 	if pass == 1 then
 		pp(c:eval[[
 			box.schema.space.create('test')
@@ -53,6 +54,18 @@ sock.run(function()
 		pp(c:eval([[
 			return 'hello', ...
 		]], 5, nil, 7))
+	elseif pass == 10 then
+		pp(c:eval([[
+			return 'tt lua', string.dump(function(...)
+				return 'hello', ...
+			end):gsub('.', function(c) return tostring(string.byte(c))..' ' end)
+		]]))
+		pp('my lua', string.dump(function(...)
+			return 'hello', ...
+		end):gsub('.', function(c) return tostring(string.byte(c))..' ' end))
+		pp(c:eval(function(...)
+			return 'hello', ...
+		end, 5, nil, 7))
 	end
 	assert(not c.tcp:closed())
 	pp('close', c:close())

@@ -100,7 +100,7 @@ c.connect = protect(function(opt)
 		c.tcp = sock.tcp
 		c.clock = sock.clock
 	end
-	c.tcp = check_io(q, c.tcp()) --pin it so that it's closed automatically on error.
+	c.tcp = check_io(c, c.tcp()) --pin it so that it's closed automatically on error.
 	local expires = opt.expires or c.clock() + (opt.timeout or c.timeout)
 	check_io(c, c.tcp:connect(c.host, c.port, expires))
 	c._b = buffer()
@@ -252,6 +252,10 @@ local function args(...)
 end
 
 c.eval = protect(function(c, expr, ...)
+	if type(expr) == 'function' then
+		expr = require'pp'.format(expr)
+		expr = string.format('return assert(%s)(...)', expr)
+	end
 	return unpack(request(c, EVAL, {[EXPR] = expr, [TUPLE] = args(...)})[DATA])
 end)
 
