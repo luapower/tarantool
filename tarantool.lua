@@ -23,6 +23,15 @@ local check_io, checkp, check, protect = errors.tcp_protocol_errors'tarantool'
 
 local c = {host = '127.0.0.1', port = 3301, timeout = 5, tracebacks = false}
 
+function c.log(severity, ...)
+	local logging = c.logging
+	if not logging then return end
+	logging.log(severity, 'taran', ...)
+end
+
+function c.dbg  (...) c.log(''    , ...) end
+function c.note (...) c.log('note', ...) end
+
 --IPROTO_*
 local OK         = 0
 local SELECT     = 1
@@ -94,6 +103,7 @@ local request, tselect --fw. decl.
 
 c.connect = protect(function(opt)
 	local c = object(c, opt)
+	c.note('connect', '%s:%s user=%s', c.host, c.port, c.user or '')
 	c:clear_metadata_cache()
 	if not c.tcp then
 		local sock = require'sock'
@@ -128,6 +138,7 @@ c.stream = function(c)
 end
 
 c.close = function(c)
+	c.note('close', '%s:%s', c.host, c.port)
 	return c.tcp:close()
 end
 
@@ -275,6 +286,7 @@ c.exec = protect(function(c, sql, params, opt, param_meta)
 			end
 		end
 	end
+	mysql.dbg('exec', '%s', sql)
 	local res = request(c, EXECUTE, {
 		[STMT_ID] = type(sql) == 'number' and sql or nil,
 		[SQL_TEXT] = type(sql) == 'string' and sql or nil,
@@ -328,5 +340,9 @@ c.ping = protect(function(c)
 	return request(c, PING, empty)
 end)
 
+local function esc_quote(s) return "''" end
+function c.esc(s)
+	return s:gsub("'", esc_quote)
+end
 
 return c
