@@ -33,23 +33,21 @@ function c.dbg  (...) c.log(''    , ...) end
 function c.note (...) c.log('note', ...) end
 
 --IPROTO_*
-local OK         = 0
-local SELECT     = 1
-local INSERT     = 2
-local REPLACE    = 3
-local UPDATE     = 4
-local DELETE     = 5
-local AUTH       = 7
-local EVAL       = 8
-local UPSERT     = 9
-local CALL       = 10
-local EXECUTE    = 11
-local NOP        = 12
-local PREPARE    = 13
-local PING       = 0x40
-
--- packet keys
-local TYPE          = 0x00
+local OK            = 0
+local SELECT        = 1
+local INSERT        = 2
+local REPLACE       = 3
+local UPDATE        = 4
+local DELETE        = 5
+local AUTH          = 7
+local EVAL          = 8
+local UPSERT        = 9
+local CALL          = 10
+local EXECUTE       = 11
+local NOP           = 12
+local PREPARE       = 13
+local PING          = 0x40
+local REQUEST_TYPE  = 0x00
 local SYNC          = 0x01
 local SPACE_ID      = 0x10
 local INDEX_ID      = 0x11
@@ -70,6 +68,7 @@ local BIND_METADATA = 0x33
 local BIND_COUNT    = 0x34
 local SQL_TEXT      = 0x40
 local SQL_BIND      = 0x41
+local SQL_INFO      = 0x42
 local STMT_ID       = 0x43
 local FIELD_NAME    = 0x00
 local FIELD_TYPE    = 0x01
@@ -78,6 +77,8 @@ local FIELD_IS_NULLABLE = 0x03
 local FIELD_IS_AUTOINCREMENT = 0x04
 local FIELD_SPAN    = 0x05
 local STREAM_ID     = 0x0a
+local SQL_INFO_ROW_COUNT         = 0
+local SQL_INFO_AUTOINCREMENT_IDS = 1
 
 -- default views
 local VIEW_SPACE = 281
@@ -145,7 +146,11 @@ end
 --[[local]] function request(c, req_type, body, expires)
 	local expires = expires or c.clock() + c.timeout
 	c.sync_num = (c.sync_num or 0) + 1
-	local header = {[SYNC] = c.sync_num, [TYPE] = req_type, [STREAM_ID] = c.stream_id}
+	local header = {
+		[SYNC] = c.sync_num,
+		[REQUEST_TYPE] = req_type,
+		[STREAM_ID] = c.stream_id,
+	}
 	local header = mp.pack(header)
 	local body = mp.pack(body)
 	local len = mp.pack(#header + #body)
@@ -158,7 +163,7 @@ end
 	local _, res_header = unpack_next()
 	checkp(c, res_header[SYNC] == c.sync_num)
 	local _, res_body = unpack_next()
-	local code = res_header[TYPE]
+	local code = res_header[REQUEST_TYPE]
 	if code ~= OK then
 		check(c, false, res_body[ERROR])
 	end
@@ -192,18 +197,31 @@ local function key_arg(key)
 end
 
 local function fields(t)
+	if not t then return end
 	local dt = {}
 	for i, t in ipairs(t) do
 		dt[i] = {
-			name = t[FIELD_NAME],
-			type = t[FIELD_TYPE],
+			name      = t[FIELD_NAME],
+			type      = t[FIELD_TYPE],
 			collation = t[FIELD_COLL],
-			not_null = not t[FIELD_IS_NULLABLE],
-			autoinc = t[FIELD_IS_AUTOINCREMENT],
-			span = t[FIELD_SPAN],
+			not_null  = not t[FIELD_IS_NULLABLE],
+			autoinc   = t[FIELD_IS_AUTOINCREMENT],
+			span      = t[FIELD_SPAN],
 		}
 	end
 	return dt
+end
+
+local function apply_sqlinfo(dt, t)
+	if t then --update query
+		dt.affected_rows = t[SQL_INFO_ROW_COUNT]
+		dt.autoinc_ids   = t[SQL_INFO_AUTOINCREMENT_IDS]
+	end
+	return dt
+end
+
+local function exec_response(res)
+	return apply_sqlinfo(res[DATA] or {}, res[SQL_INFO]), fields(res[METADATA])
 end
 
 --[[local]] function tselect(c, space, index, key, opt)
@@ -218,7 +236,7 @@ end
 	body[OFFSET] = opt.offset or 0
 	body[ITERATOR] = opt.iterator
 	local expires = opt.expires or c.clock() + (opt.timeout or c.timeout)
-	return request(c, SELECT, body, expires)[DATA]
+	return exec_response(request(c, SELECT, body, expires))
 end
 c.select = protect(tselect)
 
@@ -286,14 +304,13 @@ c.exec = protect(function(c, sql, params, opt, param_meta)
 			end
 		end
 	end
-	mysql.dbg('exec', '%s', sql)
-	local res = request(c, EXECUTE, {
+	c.dbg('exec', '%s', sql)
+	return exec_response(request(c, EXECUTE, {
 		[STMT_ID] = type(sql) == 'number' and sql or nil,
 		[SQL_TEXT] = type(sql) == 'string' and sql or nil,
 		[SQL_BIND] = params,
 		[OPTIONS] = opt or empty,
-	})
-	return res[DATA], fields(res[METADATA])
+	}))
 end)
 
 local st = {}

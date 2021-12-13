@@ -11,7 +11,7 @@ sock.run(function()
 	})
 	c = c:stream()
 	assert(c:ping())
-	local pass = 10
+	local pass = 9
 	if pass == 1 then
 		pp(c:eval[[
 			box.schema.space.create('test')
@@ -52,7 +52,7 @@ sock.run(function()
 		pp(c:delete('test', 'h'))
 	elseif pass == 9 then
 		pp(c:eval([[
-			return 'hello', ...
+			return 'hello', {1, nil, 3, a = {b = 2}, c = 3}, ...
 		]], 5, nil, 7))
 	elseif pass == 10 then
 		--NOTE: this currently doesn't work if your LuaJIT is using GC64 mode.
