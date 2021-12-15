@@ -132,7 +132,7 @@ c.connect = protect(function(opt)
 	check_io(c, c.tcp:connect(c.host, c.port, expires))
 	c._b = buffer()
 	c._mp = mp.new()
-	c._mp.assert = function(v, err) checkp(c, v, '%s', err) end
+	c._mp.error = function(err) checkp(c, false, '%s', err) end
 	c._mp.decoder[MP_DECIMAL] = decode_decimal
 	c._mp.decoder[MP_UUID   ] = decode_uuid
 	c._mb = mp:encoding_buffer()
