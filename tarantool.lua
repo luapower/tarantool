@@ -6,7 +6,7 @@ if not ... then require'tarantool_test'; return end
 
 local ffi     = require'ffi'
 local bit     = require'bit'
-local mp      = require'messagepack'
+local mp      = require'msgpack'
 local b64     = require'base64'
 local sha1    = require'sha1'.sha1
 local errors  = require'errors'
@@ -115,6 +115,9 @@ c.connect = protect(function(opt)
 	local expires = opt.expires or c.clock() + (opt.timeout or c.timeout)
 	check_io(c, c.tcp:connect(c.host, c.port, expires))
 	c._b = buffer()
+	c._mp = mp.new()
+	c._mp.assert = function(v, err) checkp(c, v, '%s', err) end
+	c._mb = mp:encoding_buffer()
 	local b = c._b(64)
 	check_io(c, c.tcp:recvn(b, 64, expires)) --greeting
 	local salt = ffi.string(check_io(c, c.tcp:recvn(b, 64, expires)), 44)
@@ -126,7 +129,7 @@ c.connect = protect(function(opt)
 			local s2 = sha1(s1)
 			local s3 = sha1(salt .. s2)
 			local scramble = xor_strings(s1, s3)
-			body[TUPLE] = {'chap-sha1', scramble}
+			body[TUPLE] = mp.array('chap-sha1', scramble)
 		end
 		request(c, AUTH, body, expires)
 	end
@@ -151,18 +154,17 @@ end
 		[REQUEST_TYPE] = req_type,
 		[STREAM_ID] = c.stream_id,
 	}
-	local header = mp.pack(header)
-	local body = mp.pack(body)
-	local len = mp.pack(#header + #body)
-	local request = len .. header .. body
-	check_io(c, c.tcp:send(request))
-	local size = ffi.string(check_io(c, c.tcp:recvn(c._b(5), 5, expires)), 5)
-	local size = mp.unpack(size)
-	local s = ffi.string(check_io(c, c.tcp:recvn(c._b(size), size, expires)), size)
-	local unpack_next = mp.unpacker(s)
-	local _, res_header = unpack_next()
+	local mp = c._mp
+	local mb = c._mb
+	local req = mb:reset():encode_map(header):encode_map(body):tostring()
+	local len = mb:reset():encode_int(#req):tostring()
+	check_io(c, c.tcp:send(len .. req))
+	local size = check_io(c, c.tcp:recvn(c._b(5), 5, expires))
+	local _, size = mp:decode_next(size, 5)
+	local s = check_io(c, c.tcp:recvn(c._b(size), size, expires))
+	local i, res_header = mp:decode_next(s, size)
 	checkp(c, res_header[SYNC] == c.sync_num)
-	local _, res_body = unpack_next()
+	local i, res_body = mp:decode_next(s, size, i)
 	local code = res_header[REQUEST_TYPE]
 	if code ~= OK then
 		check(c, false, res_body[ERROR])
@@ -276,20 +278,16 @@ c.upsert = protect(function(c, space, index, key, oplist)
 	})[DATA]
 end)
 
-local function args(...)
-	return {[mp.N] = select('#', ...), ...}
-end
-
 c.eval = protect(function(c, expr, ...)
 	if type(expr) == 'function' then
 		expr = require'pp'.format(expr)
 		expr = string.format('return assert(%s)(...)', expr)
 	end
-	return unpack(request(c, EVAL, {[EXPR] = expr, [TUPLE] = args(...)})[DATA])
+	return unpack(request(c, EVAL, {[EXPR] = expr, [TUPLE] = mp.array(...)})[DATA])
 end)
 
 c.call = protect(function(c, fn, ...)
-	return unpack(request(c, CALL, {[FUNCTION_NAME] = fn, [TUPLE] = args(...)})[DATA])
+	return unpack(request(c, CALL, {[FUNCTION_NAME] = fn, [TUPLE] = mp.array(...)})[DATA])
 end)
 
 c.exec = protect(function(c, sql, params, opt, param_meta)
