@@ -140,7 +140,7 @@ c.connect = protect(function(opt)
 	check_io(c, c.tcp:recvn(b, 64, expires)) --greeting
 	local salt = ffi.string(check_io(c, c.tcp:recvn(b, 64, expires)), 44)
 	if c.user then
-		local body = {[USER_NAME] = c.user, [TUPLE] = empty}
+		local body = {[USER_NAME] = c.user}
 		if c.password and c.password ~= '' then
 			local salt = b64.decode(salt):sub(1, 20)
 			local s1 = sha1(c.password)
@@ -213,7 +213,7 @@ c.clear_metadata_cache = function(c)
 end
 
 local function key_arg(key)
-	return type(key) == 'table' and key or key == nil and empty or {key}
+	return mp.toarray(type(key) == 'table' and key or key == nil and {} or {key})
 end
 
 local function fields(t)
@@ -261,11 +261,17 @@ end
 c.select = protect(tselect)
 
 c.insert = protect(function(c, space, tuple)
-	return request(c, INSERT, {[SPACE_ID] = resolve_space(c, space), [TUPLE] = tuple})[DATA]
+	return request(c, INSERT, {
+		[SPACE_ID] = resolve_space(c, space),
+		[TUPLE] = mp.toarray(tuple),
+	})[DATA]
 end)
 
 c.replace = protect(function(c, space, tuple)
-	return request(c, REPLACE, {[SPACE_ID] = resolve_space(c, space), [TUPLE] = tuple})[DATA]
+	return request(c, REPLACE, {
+		[SPACE_ID] = resolve_space(c, space),
+		[TUPLE] = mp.toarray(tuple),
+	})[DATA]
 end)
 
 c.update = protect(function(c, space, index, key, oplist)
@@ -274,7 +280,7 @@ c.update = protect(function(c, space, index, key, oplist)
 		[SPACE_ID] = space,
 		[INDEX_ID] = index,
 		[KEY] = key_arg(key),
-		[TUPLE] = oplist,
+		[TUPLE] = mp.toarray(oplist),
 	})[DATA]
 end)
 
