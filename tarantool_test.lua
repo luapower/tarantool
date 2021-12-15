@@ -2,6 +2,7 @@
 local tarantool = require'tarantool'
 local sock = require'sock'
 local pp = require'pp'
+local glue = require'glue'
 
 sock.run(function()
 	local c = assert(tarantool.connect{
@@ -11,7 +12,7 @@ sock.run(function()
 	})
 	c = c:stream()
 	assert(c:ping())
-	local pass = 9
+	local pass = 12
 	if pass == 1 then
 		pp(c:eval[[
 			box.schema.space.create('test')
@@ -75,6 +76,19 @@ sock.run(function()
 		pp(c:eval(function(...)
 			return 'hello', ...
 		end, 5, nil, 7))
+	elseif pass == 11 then
+		pp(c:eval([[
+			local decimal = require'decimal'
+			return decimal.new(2/3)
+		]]))
+	elseif pass == 12 then
+		local u, su = c:eval[[
+			local uuid = require'uuid'
+			local u = uuid()
+			return u, tostring(u)
+		]]
+		print(glue.tohex(u))
+		print(su)
 	end
 	assert(not c.tcp:closed())
 	pp('close', c:close())

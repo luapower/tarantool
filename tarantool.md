@@ -5,11 +5,11 @@ Tarantool client for LuaJIT.
 Uses [sock] for I/O but you can bring your own.
 
 Compared to other implementations I've seen, this one has more consistent
-error handling (from using [errors].tcp_protocol_errors), better handling
-of timeouts (due to [sock]'s `expires` parameter), it's half the code size,
-it's based on Tarantool 2.8 (streams, prepared statements), and you can
-use it in environments where you need to use the environment's built-in
-async socket API.
+error handling (from using [errors].tcp_protocol_errors in conjunction
+with own [msgpack]), better handling of timeouts (due to [sock]'s `expires`
+parameter), it's half the code size, it's based on Tarantool 2.8 (streams,
+prepared statements, UUID & DECIMAL types), and you can use it in environments
+where you need to use the environment's built-in async socket API.
 
 ## API
 

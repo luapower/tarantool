@@ -102,6 +102,22 @@ end
 
 local request, tselect --fw. decl.
 
+local MP_DECIMAL = 1
+local MP_UUID    = 2
+
+--NOTE: only works with luapower's ldecnumber which has frompacked().
+local function decode_decimal(mp, p, i, len)
+	local ldecnumber = require'ldecnumber'
+	local i2 = i + len
+	local i1, scale = mp:decode_next(p, i2, i)
+	local s = ffi.string(p+i1, i2-i1) --lame that we have to intern a string for this.
+	return ldecnumber.frompacked(s, scale)
+end
+
+local function decode_uuid(mp, p, i, len) --16 bytes binary UUID
+	return ffi.string(p+i, len)
+end
+
 c.connect = protect(function(opt)
 	local c = object(c, opt)
 	c.note('connect', '%s:%s user=%s', c.host, c.port, c.user or '')
@@ -117,6 +133,8 @@ c.connect = protect(function(opt)
 	c._b = buffer()
 	c._mp = mp.new()
 	c._mp.assert = function(v, err) checkp(c, v, '%s', err) end
+	c._mp.decoder[MP_DECIMAL] = decode_decimal
+	c._mp.decoder[MP_UUID   ] = decode_uuid
 	c._mb = mp:encoding_buffer()
 	local b = c._b(64)
 	check_io(c, c.tcp:recvn(b, 64, expires)) --greeting
