@@ -308,7 +308,7 @@ c.call = protect(function(c, fn, ...)
 	return unpack(request(c, CALL, {[FUNCTION_NAME] = fn, [TUPLE] = mp.array(...)})[DATA])
 end)
 
-c.exec = protect(function(c, sql, params, opt, param_meta)
+c.exec = protect(function(c, sql, params, xopt, param_meta)
 	if param_meta and param_meta.has_named_params then --pick params from named keys
 		local t = params
 		params = {}
@@ -325,7 +325,7 @@ c.exec = protect(function(c, sql, params, opt, param_meta)
 		[STMT_ID] = type(sql) == 'number' and sql or nil,
 		[SQL_TEXT] = type(sql) == 'string' and sql or nil,
 		[SQL_BIND] = params,
-		[OPTIONS] = opt or empty,
+		[OPTIONS] = xopt or empty,
 	}))
 end)
 
@@ -358,8 +358,8 @@ c.prepare = protect(function(c, sql)
 	})
 end)
 
-function st:exec(params, opt)
-	return self.conn:exec(self.id, params, opt, self.params)
+function st:exec(params, xopt)
+	return self.conn:exec(self.id, params, xopt, self.params)
 end
 
 local unprepare = protect(function(c, stmt_id)
