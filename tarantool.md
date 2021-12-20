@@ -22,6 +22,7 @@ where you need to use the environment's built-in async socket API.
 `  opt.timeout`                                   timeout (`2`)
 `  opt.tcp`                                       tcp object (`sock.tcp()`)
 `  opt.clock`                                     clock function (`sock.clock`)
+`  opt.mp`                                        [msgpack] instance to use (optional)
 `tt:stream() -> tt`                               create a stream
 `tt:select(space,[index],[key],[sopt]) -> tuples` select tuples from a space
 `  sopt.limit`                                    limit (`4GB-1`)

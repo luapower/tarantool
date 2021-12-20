@@ -131,7 +131,7 @@ c.connect = protect(function(opt)
 	local expires = opt.expires or c.clock() + (opt.timeout or c.timeout)
 	check_io(c, c.tcp:connect(c.host, c.port, expires))
 	c._b = buffer()
-	c.mp = mp.new()
+	c.mp = opt.mp or mp.new()
 	c.mp.error = function(err) checkp(c, false, '%s', err) end
 	c.mp.decoder[MP_DECIMAL] = decode_decimal
 	c.mp.decoder[MP_UUID   ] = decode_uuid
