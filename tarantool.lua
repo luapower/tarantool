@@ -131,10 +131,10 @@ c.connect = protect(function(opt)
 	local expires = opt.expires or c.clock() + (opt.timeout or c.timeout)
 	check_io(c, c.tcp:connect(c.host, c.port, expires))
 	c._b = buffer()
-	c._mp = mp.new()
-	c._mp.error = function(err) checkp(c, false, '%s', err) end
-	c._mp.decoder[MP_DECIMAL] = decode_decimal
-	c._mp.decoder[MP_UUID   ] = decode_uuid
+	c.mp = mp.new()
+	c.mp.error = function(err) checkp(c, false, '%s', err) end
+	c.mp.decoder[MP_DECIMAL] = decode_decimal
+	c.mp.decoder[MP_UUID   ] = decode_uuid
 	c._mb = mp:encoding_buffer()
 	local b = c._b(64)
 	check_io(c, c.tcp:recvn(b, 64, expires)) --greeting
@@ -172,7 +172,7 @@ end
 		[REQUEST_TYPE] = req_type,
 		[STREAM_ID] = c.stream_id,
 	}
-	local mp = c._mp
+	local mp = c.mp
 	local mb = c._mb
 	local req = mb:reset():encode_map(header):encode_map(body):tostring()
 	local len = mb:reset():encode_int(#req):tostring()

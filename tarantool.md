@@ -42,6 +42,7 @@ where you need to use the environment's built-in async socket API.
 `st.params`                                       param list with param info
 `tt:ping()`                                       ping
 `tt:clear_metadata_cache()`                       clear `space` and `index` names
+`tt.mp`                                           [msgpack] instance used
 ------------------------------------------------- ----------------------------
 
 What the args mean:
@@ -49,6 +50,7 @@ What the args mean:
 * `space` and `index` can be given by name or number. Resolved names are
 cached so you need to call `tt:clear_metadata_cache()` if you know that
 a space or index got renamed or removed (but not when new ones are created).
+If you're using SQL exclusively, you don't have to worry about this.
 * `tuple` is an array of values.
 * `key` can be a string or an array of values.
 * `oplist` is an array of update operations of form `{op, field, value}`.
